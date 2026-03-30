@@ -112,6 +112,10 @@ def security_process_main(
             if stop_event.is_set():
                 break
 
+            # Pick up newly appended bars (live data support)
+            reader.refresh()
+            total_bars = reader.size
+
             # Read target time from sync block
             target_time = sync_block.get_target_time(sec_id)
 

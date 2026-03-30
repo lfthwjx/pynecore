@@ -1573,6 +1573,26 @@ class OHLCVReader:
                 continue
             yield ohlcv
 
+    def refresh(self):
+        """
+        Re-mmap the file to pick up newly appended bars.
+
+        Call this when the underlying .ohlcv file has grown (e.g., live
+        trading appends new bars). The mmap is replaced with a new one
+        covering the full file, and ``size`` is updated accordingly.
+        Existing state (start_timestamp, interval) is preserved.
+        """
+        if self._file is None:
+            return
+        new_file_size = os.path.getsize(self.path)
+        new_record_count = new_file_size // RECORD_SIZE
+        if new_record_count <= self._size:
+            return  # nothing new
+        if self._mmap:
+            self._mmap.close()
+        self._mmap = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
+        self._size = new_record_count
+
     def close(self):
         """
         Close file and memory mapping
