@@ -1670,8 +1670,8 @@ def stdev(source: float, length: int, biased=True) -> float | NA[float]:
     :return: The standard deviation of the source series
     """
     try:
-        return math.sqrt(variance(source, length, biased))
-    except TypeError:
+        return math.sqrt(max(0.0, variance(source, length, biased)))
+    except (TypeError, ValueError):
         return NA(float)
 
 
@@ -1926,7 +1926,9 @@ def variance(source: Series[float],
         squares = sum_sq / (length - 1)
         var = squares - (length / (length - 1)) * mean_val * mean_val
 
-    return var
+    # Clamp to zero: E[X²] - E[X]² can go slightly negative due to
+    # floating-point cancellation when values are nearly identical.
+    return max(0.0, var)
 
 
 def valuewhen(condition: bool, source: float, occurrence: int) -> float | NA[float]:
