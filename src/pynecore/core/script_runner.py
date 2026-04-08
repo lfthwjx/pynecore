@@ -180,7 +180,7 @@ class ScriptRunner:
 
     __slots__ = ('script_module', 'script', 'ohlcv_iter', 'syminfo', 'update_syminfo_every_run',
                  'bar_index', 'tz', 'plot_writer', 'strat_writer', 'trades_writer', 'last_bar_index',
-                 'equity_curve', 'first_price', 'last_price',
+                 'no_peek', 'equity_curve', 'first_price', 'last_price',
                  '_script_path', '_security_data')
 
     def __init__(self, script_path: Path, ohlcv_iter: Iterable[OHLCV], syminfo: SymInfo, *,
@@ -188,7 +188,8 @@ class ScriptRunner:
                  trade_path: Path | None = None,
                  update_syminfo_every_run: bool = False, last_bar_index=0,
                  inputs: dict[str, Any] | None = None,
-                 security_data: dict[str, str | Path] | None = None):
+                 security_data: dict[str, str | Path] | None = None,
+                 no_peek: bool = False):
         """
         Initialize the script runner
 
@@ -242,6 +243,7 @@ class ScriptRunner:
         self.syminfo = syminfo
         self.update_syminfo_every_run = update_syminfo_every_run
         self.last_bar_index = last_bar_index
+        self.no_peek = no_peek
         self.bar_index = 0
 
         self.tz = _parse_timezone(syminfo.timezone)
@@ -476,21 +478,36 @@ class ScriptRunner:
                 inject_protocol(self.script_module, signal_fn, write_fn, read_fn, wait_fn,
                                 same_context=frozen_same_ctx)
 
-            # Peek-ahead pattern: look one step ahead to detect the last bar accurately
             ohlcv_iterator = iter(self.ohlcv_iter)
-            next_candle = next(ohlcv_iterator, None)
 
-            while next_candle is not None:
-                candle = next_candle
-                next_candle = next(ohlcv_iterator, None)
+            if self.no_peek:
+                # Live mode: no peek-ahead, process bars immediately (zero lag).
+                # barstate.islast is always False — safe for live streams where
+                # bars never end, and acceptable when the strategy doesn't use
+                # islast for trading logic (only display panel rendering).
+                _no_peek_iter = ohlcv_iterator
+            else:
+                # Historical mode: peek-ahead for accurate islast detection.
+                # Fetches bar N+1 before processing bar N so we can detect the
+                # last bar. This causes a 1-bar lag in live trading.
+                _first = next(ohlcv_iterator, None)
+                def _peek_gen():
+                    next_candle = _first
+                    while next_candle is not None:
+                        candle = next_candle
+                        next_candle = next(ohlcv_iterator, None)
+                        barstate.islast = (next_candle is None)
+                        yield candle
+                _no_peek_iter = _peek_gen()
+
+            for candle in _no_peek_iter:
+                if self.no_peek:
+                    barstate.islast = False
 
                 # Update syminfo lib properties if needed, other ScriptRunner instances may have changed them
                 if self.update_syminfo_every_run:
                     _set_lib_syminfo_properties(self.syminfo, lib)
                     self.tz = _parse_timezone(lib.syminfo.timezone)
-
-                # Accurate last bar detection - no more estimation needed
-                barstate.islast = (next_candle is None)
 
                 # Update lib properties
                 _set_lib_properties(candle, self.bar_index, self.tz, lib)
